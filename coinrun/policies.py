@@ -121,6 +121,7 @@ class LstmPolicy(object):
             h5, snew = lstm(xs, ms, S, 'lstm1', nh=nlstm)
             h5 = seq_to_batch(h5)
             vf = fc(h5, 'v', 1)[:,0]
+            lp = fc(h, 'lp', 1)[:,0]
             self.pd, self.pi = self.pdtype.pdfromlatent(h5)
 
         a0 = self.pd.sample()
@@ -128,7 +129,7 @@ class LstmPolicy(object):
         self.initial_state = np.zeros((nenv, nlstm*2), dtype=np.float32)
 
         def step(ob, state, mask):
-            return sess.run([a0, vf, snew, neglogp0], {X:ob, S:state, M:mask})
+            return sess.run([a0, vf, lp, snew, neglogp0], {X:ob, S:state, M:mask})
 
         def value(ob, state, mask):
             return sess.run(vf, {X:ob, S:state, M:mask})
@@ -137,6 +138,7 @@ class LstmPolicy(object):
         self.M = M
         self.S = S
         self.vf = vf
+        self.lp = lp
         self.step = step
         self.value = value
 

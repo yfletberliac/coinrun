@@ -35,7 +35,7 @@ def main():
 
     with tf.Session(config=config):
         env = wrappers.add_final_wrappers(env)
-        
+
         policy = policies.get_policy()
 
         ppo2.learn(policy=policy,
@@ -55,4 +55,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

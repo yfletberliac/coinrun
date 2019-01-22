@@ -57,8 +57,10 @@ class MpiAdamOptimizer(tf.train.AdamOptimizer):
 
 class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
-                nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm):
+                nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm, hvd):
         sess = tf.get_default_session()
+
+        hvd.init()
 
         train_model = policy(sess, ob_space, ac_space, nbatch_train, nsteps)
         norm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -105,7 +107,7 @@ class Model(object):
 
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
 
-        lp_loss = tf.square(learnpotpred - loss)
+        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - loss)
 
         loss = loss + lp_loss * lp_coef
 
@@ -113,6 +115,9 @@ class Model(object):
             trainer = MpiAdamOptimizer(MPI.COMM_WORLD, learning_rate=LR, epsilon=1e-5)
         else:
             trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
+
+        # Add Horovod Distributed Optimizer
+        trainer = hvd.DistributedOptimizer(trainer)
 
         grads_and_var = trainer.compute_gradients(loss, params)
 
@@ -132,6 +137,7 @@ class Model(object):
 
             td_map = {train_model.X:obs, A:actions, ADV:advs, R:returns, LR:lr,
                     CLIPRANGE:cliprange, OLDNEGLOGPAC:neglogpacs, OLDVPRED:values}
+
             if states is not None:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
@@ -188,7 +194,7 @@ class Runner(AbstractEnvRunner):
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
-            if learnpot == [] or learnpot >= np.mean(learnpot):
+            if (mb_learnpot == []) or (learnpot.any() >= np.mean(mb_learnpot)):
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)
@@ -248,7 +254,7 @@ def constfn(val):
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             vf_coef=0.5, lp_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
             log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-            save_interval=0, load_path=None):
+            save_interval=0, load_path=None, hvd):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     mpi_size = comm.Get_size()
@@ -270,7 +276,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
 
     model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nbatch_act=nenvs, nbatch_train=nbatch_train,
                     nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, lp_coef=lp_coef,
-                    max_grad_norm=max_grad_norm)
+                    max_grad_norm=max_grad_norm, hvd=hvd)
 
     utils.load_all_params(sess)
 
@@ -332,7 +338,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                 for start in range(0, nbatch, nbatch_train):
                     end = start + nbatch_train
                     mbinds = inds[start:end]
-                    slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, learnpot, neglogpacs))
+                    slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices))
         else: # recurrent version
             assert nenvs % nminibatches == 0
@@ -345,7 +351,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                     end = start + envsperbatch
                     mbenvinds = envinds[start:end]
                     mbflatinds = flatinds[mbenvinds].ravel()
-                    slices = (arr[mbflatinds] for arr in (obs, returns, masks, actions, values, learnpot, neglogpacs))
+                    slices = (arr[mbflatinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mbstates = states[mbenvinds]
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices, mbstates))
 

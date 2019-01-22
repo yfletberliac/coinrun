@@ -95,6 +95,7 @@ class EpisodeRewardWrapper(gym.Wrapper):
         self.reset = reset
         self.step = step
 
+
 def add_final_wrappers(env):
     env = EpisodeRewardWrapper(env)
 

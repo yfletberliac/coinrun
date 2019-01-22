@@ -14,12 +14,13 @@ def clean_tb_dir():
 
     comm.Barrier()
 
+
 class TB_Writer(object):
     def __init__(self, sess):
         comm = MPI.COMM_WORLD
         rank = comm.Get_rank()
 
-        clean_tb_dir()
+        # clean_tb_dir()
 
         tb_writer = tf.summary.FileWriter(Config.TB_DIR + '/' + Config.RUN_ID + '_' + str(rank), sess.graph)
         total_steps = [0]

@@ -195,7 +195,7 @@ class Runner(AbstractEnvRunner):
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
-            if (mb_learnpot == []) or (learnpot.any() >= np.mean(mb_learnpot)):
+            if (mb_learnpot == []) or (np.median(learnpot) >= np.mean(mb_learnpot)):
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)
@@ -210,7 +210,7 @@ class Runner(AbstractEnvRunner):
                     maybeepinfo = info.get('episode')
                     if maybeepinfo: epinfos.append(maybeepinfo)
                 mb_rewards.append(rewards)
-        mpi_print("coucou")
+
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)

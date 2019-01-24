@@ -11,6 +11,7 @@ from coinrun import setup_utils, policies, wrappers, ppo2
 from coinrun.config import Config
 import horovod.tensorflow as hvd
 
+
 def main():
     hvd.init()
     args = setup_utils.setup_and_load()
@@ -52,6 +53,7 @@ def main():
                     cliprange=lambda f : f * 0.2,
                     total_timesteps=total_timesteps,
                     hvd=hvd)
+
 
 if __name__ == '__main__':
     main()

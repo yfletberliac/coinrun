@@ -1,17 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="46ba8cb6-122e-45eb-9f92-6f5ab7838a6f" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/Makefile" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/Makefile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/main_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/main_utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/policies.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/policies.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/ppo2.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/ppo2.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/tb_utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/tb_utils.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/train_agent.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/train_agent.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/coinrun/wrappers.py" beforeDir="false" afterPath="$PROJECT_DIR$/coinrun/wrappers.py" afterDir="false" />
-    </list>
+    <list default="true" id="46ba8cb6-122e-45eb-9f92-6f5ab7838a6f" name="Default Changelist" comment="" />
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -37,8 +27,8 @@
       <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/coinrun/ppo2.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="28">
-              <caret line="241" lean-forward="true" selection-start-line="241" selection-end-line="241" />
+            <state relative-caret-position="464">
+              <caret line="210" column="63" lean-forward="true" selection-start-line="210" selection-start-column="63" selection-end-line="210" selection-end-column="63" />
               <folding>
                 <element signature="e#185#196#0" expanded="true" />
               </folding>
@@ -234,12 +224,12 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1547462606354</updated>
-      <workItem from="1547462608548" duration="52610000" />
+      <workItem from="1547462608548" duration="52834000" />
     </task>
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="52610000" />
+    <option name="totallyTimeSpent" value="52834000" />
   </component>
   <component name="ToolWindowManager">
     <frame x="0" y="0" width="1440" height="900" extended-state="6" />
@@ -400,8 +390,8 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/coinrun/ppo2.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="28">
-          <caret line="241" lean-forward="true" selection-start-line="241" selection-end-line="241" />
+        <state relative-caret-position="464">
+          <caret line="210" column="63" lean-forward="true" selection-start-line="210" selection-start-column="63" selection-end-line="210" selection-end-column="63" />
           <folding>
             <element signature="e#185#196#0" expanded="true" />
           </folding>

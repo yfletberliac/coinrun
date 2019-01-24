@@ -55,10 +55,13 @@ class MpiAdamOptimizer(tf.train.AdamOptimizer):
 
         return avg_grads_and_vars
 
+
 class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
-                nsteps, ent_coef, vf_coef, max_grad_norm):
+                nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm, hvd):
         sess = tf.get_default_session()
+
+        hvd.init()
 
         train_model = policy(sess, ob_space, ac_space, nbatch_train, nsteps)
         norm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -76,6 +79,7 @@ class Model(object):
         entropy = tf.reduce_mean(train_model.pd.entropy())
 
         vpred = train_model.vf
+        learnpotpred = train_model.lp
         vpredclipped = OLDVPRED + tf.clip_by_value(train_model.vf - OLDVPRED, - CLIPRANGE, CLIPRANGE)
         vf_losses1 = tf.square(vpred - R)
         vf_losses2 = tf.square(vpredclipped - R)
@@ -104,10 +108,17 @@ class Model(object):
 
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
 
+        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - approxkl)
+
+        loss = loss + lp_loss * lp_coef
+
         if Config.SYNC_FROM_ROOT:
             trainer = MpiAdamOptimizer(MPI.COMM_WORLD, learning_rate=LR, epsilon=1e-5)
         else:
             trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
+
+        # Add Horovod Distributed Optimizer
+        trainer = hvd.DistributedOptimizer(trainer)
 
         grads_and_var = trainer.compute_gradients(loss, params)
 
@@ -127,14 +138,16 @@ class Model(object):
 
             td_map = {train_model.X:obs, A:actions, ADV:advs, R:returns, LR:lr,
                     CLIPRANGE:cliprange, OLDNEGLOGPAC:neglogpacs, OLDVPRED:values}
+
             if states is not None:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
             return sess.run(
-                [pg_loss, vf_loss, entropy, approxkl, clipfrac, l2_loss, _train],
+                [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train],
                 td_map
             )[:-1]
-        self.loss_names = ['policy_loss', 'value_loss', 'policy_entropy', 'approxkl', 'clipfrac', 'l2_loss']
+        self.loss_names = ['policy_loss', 'value_loss', 'learning_potential_loss', 'policy_entropy',
+                           'approxkl', 'clipfrac', 'l2_loss']
 
         def save(save_path):
             ps = sess.run(params)
@@ -165,6 +178,7 @@ class Model(object):
         else:
             initialize()
 
+
 class Runner(AbstractEnvRunner):
     def __init__(self, *, env, model, nsteps, gamma, lam):
         super().__init__(env=env, model=model, nsteps=nsteps)
@@ -173,32 +187,36 @@ class Runner(AbstractEnvRunner):
 
     def run(self):
         # Here, we init the lists that will contain the mb of experiences
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_learnpot, mb_dones, mb_neglogpacs = [],[],[],[],[],[],[]
         mb_states = self.states
         epinfos = []
         # For n in range number of steps
-        for _ in range(self.nsteps):
+        while len(mb_obs) < self.nsteps+1:
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
-            actions, values, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
-            mb_obs.append(self.obs.copy())
-            mb_actions.append(actions)
-            mb_values.append(values)
-            mb_neglogpacs.append(neglogpacs)
-            mb_dones.append(self.dones)
+            actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
+            if (mb_learnpot == []) or (learnpot.any() >= np.mean(mb_learnpot)):
+                mb_obs.append(self.obs.copy())
+                mb_actions.append(actions)
+                mb_values.append(values)
+                mb_learnpot.append(learnpot)
+                mb_neglogpacs.append(neglogpacs)
+                mb_dones.append(self.dones)
 
-            # Take actions in env and look the results
-            # Infos contains a ton of useful informations
-            self.obs[:], rewards, self.dones, infos = self.env.step(actions)
-            for info in infos:
-                maybeepinfo = info.get('episode')
-                if maybeepinfo: epinfos.append(maybeepinfo)
-            mb_rewards.append(rewards)
+                # Take actions in env and look the results
+                # Infos contains a ton of useful informations
+                self.obs[:], rewards, self.dones, infos = self.env.step(actions)
+                for info in infos:
+                    maybeepinfo = info.get('episode')
+                    if maybeepinfo: epinfos.append(maybeepinfo)
+                mb_rewards.append(rewards)
+        mpi_print("coucou")
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
         mb_actions = np.asarray(mb_actions)
         mb_values = np.asarray(mb_values, dtype=np.float32)
+        mb_learnpot = np.asarray(mb_learnpot, dtype=np.float32)
         mb_neglogpacs = np.asarray(mb_neglogpacs, dtype=np.float32)
         mb_dones = np.asarray(mb_dones, dtype=np.bool)
         last_values = self.model.value(self.obs, self.states, self.dones)
@@ -218,8 +236,9 @@ class Runner(AbstractEnvRunner):
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
         mb_returns = mb_advs + mb_values
 
-        return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_neglogpacs)),
+        return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_learnpot, mb_neglogpacs)),
             mb_states, epinfos)
+
 
 def sf01(arr):
     """
@@ -236,15 +255,14 @@ def constfn(val):
 
 
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
-            vf_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
+            vf_coef=0.5, lp_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
             log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-            save_interval=0, load_path=None):
+            save_interval=0, load_path=None, hvd):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     mpi_size = comm.Get_size()
 
     sess = tf.get_default_session()
-    tb_writer = TB_Writer(sess)
 
     if isinstance(lr, float): lr = constfn(lr)
     else: assert callable(lr)
@@ -260,8 +278,8 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
     nbatch_train = nbatch // nminibatches
 
     model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nbatch_act=nenvs, nbatch_train=nbatch_train,
-                    nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef,
-                    max_grad_norm=max_grad_norm)
+                    nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, lp_coef=lp_coef,
+                    max_grad_norm=max_grad_norm, hvd=hvd)
 
     utils.load_all_params(sess)
 
@@ -290,6 +308,8 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         base_dict = {'datapoints': datapoints}
         utils.save_params_in_scopes(sess, ['model'], Config.get_save_file(base_name=base_name), base_dict)
 
+    tb_writer = TB_Writer(sess)
+
     for update in range(1, nupdates+1):
         assert nbatch % nminibatches == 0
         nbatch_train = nbatch // nminibatches
@@ -301,7 +321,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         mpi_print('collecting rollouts...')
         run_tstart = time.time()
 
-        obs, returns, masks, actions, values, neglogpacs, states, epinfos = runner.run()
+        obs, returns, masks, actions, values, learnpot, neglogpacs, states, epinfos = runner.run()
         epinfobuf10.extend(epinfos)
         epinfobuf100.extend(epinfos)
 

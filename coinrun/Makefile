@@ -5,7 +5,7 @@ OBJDIRD=.build-debug
 ifeq ($(UNAME),Linux)
   PKG  =pkg-config
   MOC  =moc
-  LIBS =-L/usr/lib64 -lm -lGL -lGLU
+  LIBS =-L/usr/lib64 -lm -lGLU
   INC  =-I/usr/include
   SO=.so
 endif

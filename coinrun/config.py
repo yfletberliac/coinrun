@@ -2,6 +2,7 @@ from mpi4py import MPI
 import argparse
 import os
 
+
 class ConfigSingle(object):
     """
     A global config object that can be initialized from command line arguments or
@@ -9,7 +10,7 @@ class ConfigSingle(object):
     """
     def __init__(self):
         self.WORKDIR = './saved_models/'
-        self.TB_DIR = '/tmp/tensorflow'
+        self.TB_DIR = './logs/'
         if not os.path.exists(self.WORKDIR):
             os.makedirs(self.WORKDIR, exist_ok=True)
 
@@ -73,14 +74,14 @@ class ConfigSingle(object):
 
         # What dropout probability to use after each convolutional layer
         # NOTE: Only applies to IMPALA and IMPALA-Large architectures
-        type_keys.append(('dropout', 'dropout', float, 0.0, True))
+        type_keys.append(('dropout', 'dropout', float, 0.1, True))
 
         # Should data augmentation be used
         # 1/0 means True/False
-        type_keys.append(('uda', 'use_data_augmentation', int, 0))
+        type_keys.append(('uda', 'use_data_augmentation', int, 1))
 
         # The l2 penalty to use during training
-        type_keys.append(('l2', 'l2_weight', float, 0.0))
+        type_keys.append(('l2', 'l2_weight', float, 0.0001))
 
         # The probability the agent's action is replaced with a random action
         type_keys.append(('eps', 'epsilon_greedy', float, 0.0))
@@ -129,8 +130,8 @@ class ConfigSingle(object):
         for bk in bool_keys:
             arg_keys.append(bk[1])
 
-            if (len(bk) > 2) and bk[2]:
-                self.RES_KEYS.append(bk[1])
+            if (len(tk) > 2) and tk[2]:
+                self.RES_KEYS.append(tk[1])
 
         self.arg_keys = arg_keys
         self.bool_keys = bool_keys

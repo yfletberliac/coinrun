@@ -167,7 +167,7 @@ def process_ep_buf(epinfobuf, tb_writer=None, suffix='', step=0):
         rew_mean = mpi_average_train_test([rew_mean])[0]
 
     if tb_writer is not None:
-        tb_writer.log_scalar(rew_mean, 'rew_mean' + suffix, step)
+        tb_writer.log_scalar(rew_mean, 'rew_mean', step)
 
     aux_dicts = []
 

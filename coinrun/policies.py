@@ -121,6 +121,7 @@ class LstmPolicy(object):
             h5, snew = lstm(xs, ms, S, 'lstm1', nh=nlstm)
             h5 = seq_to_batch(h5)
             vf = fc(h5, 'v', 1)[:,0]
+            lp = fc(h, 'lp', 1)[:,0]
             self.pd, self.pi = self.pdtype.pdfromlatent(h5)
 
         a0 = self.pd.sample()
@@ -128,7 +129,7 @@ class LstmPolicy(object):
         self.initial_state = np.zeros((nenv, nlstm*2), dtype=np.float32)
 
         def step(ob, state, mask):
-            return sess.run([a0, vf, snew, neglogp0], {X:ob, S:state, M:mask})
+            return sess.run([a0, vf, lp, snew, neglogp0], {X:ob, S:state, M:mask})
 
         def value(ob, state, mask):
             return sess.run(vf, {X:ob, S:state, M:mask})
@@ -137,6 +138,7 @@ class LstmPolicy(object):
         self.M = M
         self.S = S
         self.vf = vf
+        self.lp = lp
         self.step = step
         self.value = value
 
@@ -148,6 +150,7 @@ class CnnPolicy(object):
         with tf.variable_scope("model", reuse=tf.AUTO_REUSE):
             h, self.dropout_assign_ops = choose_cnn(processed_x)
             vf = fc(h, 'v', 1)[:,0]
+            lp = fc(h, 'lp', 1)[:,0]
             self.pd, self.pi = self.pdtype.pdfromlatent(h, init_scale=0.01)
 
         a0 = self.pd.sample()
@@ -155,14 +158,15 @@ class CnnPolicy(object):
         self.initial_state = None
 
         def step(ob, *_args, **_kwargs):
-            a, v, neglogp = sess.run([a0, vf, neglogp0], {X:ob})
-            return a, v, self.initial_state, neglogp
+            a, v, l, neglogp = sess.run([a0, vf, lp, neglogp0], {X:ob})
+            return a, v, l, self.initial_state, neglogp
 
         def value(ob, *_args, **_kwargs):
             return sess.run(vf, {X:ob})
 
         self.X = X
         self.vf = vf
+        self.lp = lp
         self.step = step
         self.value = value
 

@@ -76,7 +76,7 @@ def enjoy_env_sess(sess):
     done = np.zeros(nenvs)
 
     while should_continue():
-        action, values, state, _ = agent.step(obs, state, done)
+        action, values, _, state, _ = agent.step(obs, state, done)
         obs, rew, done, info = env.step(action)
 
         if should_render and should_render_obs:

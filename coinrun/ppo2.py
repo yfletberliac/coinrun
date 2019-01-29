@@ -109,8 +109,7 @@ class Model(object):
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
 
         lp_loss = tf.square(tf.reduce_mean(learnpotpred) - approxkl)
-
-        loss = loss + lp_loss * lp_coef
+        loss = loss + lp_loss * lp_coef * LR
 
         if Config.SYNC_FROM_ROOT:
             trainer = MpiAdamOptimizer(MPI.COMM_WORLD, learning_rate=LR, epsilon=1e-5)
@@ -137,7 +136,7 @@ class Model(object):
             advs = (advs - adv_mean) / (adv_std + 1e-8)
 
             td_map = {train_model.X:obs, A:actions, ADV:advs, R:returns, LR:lr,
-                    CLIPRANGE:cliprange, OLDNEGLOGPAC:neglogpacs, OLDVPRED:values}
+                      CLIPRANGE:cliprange, OLDNEGLOGPAC:neglogpacs, OLDVPRED:values}
 
             if states is not None:
                 td_map[train_model.S] = states
@@ -191,27 +190,33 @@ class Runner(AbstractEnvRunner):
         mb_states = self.states
         epinfos = []
         # For n in range number of steps
-        while len(mb_obs) < self.nsteps+1:
+        for _ in range(2 * self.nsteps):
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
-            if (mb_learnpot == []) or (np.median(learnpot) >= np.mean(mb_learnpot)):
-                mb_obs.append(self.obs.copy())
-                mb_actions.append(actions)
-                mb_values.append(values)
-                mb_learnpot.append(learnpot)
-                mb_neglogpacs.append(neglogpacs)
-                mb_dones.append(self.dones)
 
-                # Take actions in env and look the results
-                # Infos contains a ton of useful informations
-                self.obs[:], rewards, self.dones, infos = self.env.step(actions)
-                for info in infos:
-                    maybeepinfo = info.get('episode')
-                    if maybeepinfo: epinfos.append(maybeepinfo)
-                mb_rewards.append(rewards)
+            mb_obs.append(self.obs.copy())
+            mb_actions.append(actions)
+            mb_values.append(values)
+            mb_learnpot.append(learnpot)
+            mb_neglogpacs.append(neglogpacs)
+            mb_dones.append(self.dones)
 
-        #batch of steps to batch of rollouts
+            # Take actions in env and look the results
+            # Infos contains a ton of useful informations
+            self.obs[:], rewards, self.dones, infos = self.env.step(actions)
+            for info in infos:
+                maybeepinfo = info.get('episode')
+                if maybeepinfo: epinfos.append(maybeepinfo)
+            mb_rewards.append(rewards)
+
+        lp_index = sorted(range(len(mb_learnpot)),
+                          key=lambda k: np.mean(mb_learnpot, axis=1)[k],
+                          reverse=True)
+
+        mb_learnpot = [mb_learnpot[i] for i in lp_index][:self.nsteps]
+
+        # batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
         mb_actions = np.asarray(mb_actions)

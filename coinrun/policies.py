@@ -142,6 +142,7 @@ class LstmPolicy(object):
         self.step = step
         self.value = value
 
+
 class CnnPolicy(object):
     def __init__(self, sess, ob_space, ac_space, nbatch, nsteps, **conv_kwargs): #pylint: disable=W0613
         self.pdtype = make_pdtype(ac_space)

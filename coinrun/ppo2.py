@@ -21,12 +21,15 @@ from baselines.common.runners import AbstractEnvRunner
 from baselines.common.tf_util import initialize
 from baselines.common.mpi_util import sync_from_root
 
+
 class MpiAdamOptimizer(tf.train.AdamOptimizer):
     """Adam optimizer that averages gradients across mpi processes."""
+
     def __init__(self, comm, **kwargs):
         self.comm = comm
         self.train_frac = 1.0 - Config.get_test_frac()
         tf.train.AdamOptimizer.__init__(self, **kwargs)
+
     def compute_gradients(self, loss, var_list, **kwargs):
         grads_and_vars = tf.train.AdamOptimizer.compute_gradients(self, loss, var_list, **kwargs)
         grads_and_vars = [(g, v) for g, v in grads_and_vars if g is not None]
@@ -51,14 +54,14 @@ class MpiAdamOptimizer(tf.train.AdamOptimizer):
         avg_flat_grad.set_shape(flat_grad.shape)
         avg_grads = tf.split(avg_flat_grad, sizes, axis=0)
         avg_grads_and_vars = [(tf.reshape(g, v.shape), v)
-                    for g, (_, v) in zip(avg_grads, grads_and_vars)]
+                              for g, (_, v) in zip(avg_grads, grads_and_vars)]
 
         return avg_grads_and_vars
 
 
 class Model(object):
     def __init__(self, *, policy, ob_space, ac_space, nbatch_act, nbatch_train,
-                nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm, hvd):
+                 nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm, hvd):
         sess = tf.get_default_session()
 
         hvd.init()
@@ -108,7 +111,7 @@ class Model(object):
 
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
 
-        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - approxkl)
+        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - loss)
 
         loss = loss + lp_loss * lp_coef
 
@@ -136,8 +139,8 @@ class Model(object):
             adv_std = np.std(advs, axis=0, keepdims=True)
             advs = (advs - adv_mean) / (adv_std + 1e-8)
 
-            td_map = {train_model.X:obs, A:actions, ADV:advs, R:returns, LR:lr,
-                    CLIPRANGE:cliprange, OLDNEGLOGPAC:neglogpacs, OLDVPRED:values}
+            td_map = {train_model.X: obs, A: actions, ADV: advs, R: returns, LR: lr,
+                      CLIPRANGE: cliprange, OLDNEGLOGPAC: neglogpacs, OLDVPRED: values}
 
             if states is not None:
                 td_map[train_model.S] = states
@@ -146,6 +149,7 @@ class Model(object):
                 [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train],
                 td_map
             )[:-1]
+
         self.loss_names = ['policy_loss', 'value_loss', 'learning_potential_loss', 'policy_entropy',
                            'approxkl', 'clipfrac', 'l2_loss']
 
@@ -172,9 +176,9 @@ class Model(object):
         if Config.SYNC_FROM_ROOT:
             if MPI.COMM_WORLD.Get_rank() == 0:
                 initialize()
-            
+
             global_variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="")
-            sync_from_root(sess, global_variables) #pylint: disable=E1101
+            sync_from_root(sess, global_variables)  # pylint: disable=E1101
         else:
             initialize()
 
@@ -187,15 +191,18 @@ class Runner(AbstractEnvRunner):
 
     def run(self):
         # Here, we init the lists that will contain the mb of experiences
-        mb_obs, mb_rewards, mb_actions, mb_values, mb_learnpot, mb_dones, mb_neglogpacs = [],[],[],[],[],[],[]
+        mb_obs, mb_rewards, mb_actions, mb_values, mb_learnpot, mb_dones, mb_neglogpacs = [], [], [], [], [], [], []
         mb_states = self.states
         epinfos = []
+        n_try = 0
+
         # For n in range number of steps
-        while len(mb_obs) < self.nsteps+1:
+        while len(mb_obs) < self.nsteps + 1:
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
-            if (mb_learnpot == []) or (np.median(learnpot) >= np.mean(mb_learnpot)):
+
+            if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot)) or (n_try > 5):
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)
@@ -210,8 +217,14 @@ class Runner(AbstractEnvRunner):
                     maybeepinfo = info.get('episode')
                     if maybeepinfo: epinfos.append(maybeepinfo)
                 mb_rewards.append(rewards)
+                n_try = 0
+            else:
+                n_try += 1
+                if n_try % 5 == 0:
+                    mpi_print("try another action at step", len(mb_obs), "with n_try = ", n_try)
+                self.obs[:], _, self.dones, _ = self.env.step(actions)
 
-        #batch of steps to batch of rollouts
+        # batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
         mb_actions = np.asarray(mb_actions)
@@ -230,14 +243,14 @@ class Runner(AbstractEnvRunner):
                 nextnonterminal = 1.0 - self.dones
                 nextvalues = last_values
             else:
-                nextnonterminal = 1.0 - mb_dones[t+1]
-                nextvalues = mb_values[t+1]
+                nextnonterminal = 1.0 - mb_dones[t + 1]
+                nextvalues = mb_values[t + 1]
             delta = mb_rewards[t] + self.gamma * nextvalues * nextnonterminal - mb_values[t]
             mb_advs[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
         mb_returns = mb_advs + mb_values
 
         return (*map(sf01, (mb_obs, mb_returns, mb_dones, mb_actions, mb_values, mb_learnpot, mb_neglogpacs)),
-            mb_states, epinfos)
+                mb_states, epinfos)
 
 
 def sf01(arr):
@@ -251,35 +264,40 @@ def sf01(arr):
 def constfn(val):
     def f(_):
         return val
+
     return f
 
 
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
-            vf_coef=0.5, lp_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
-            log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-            save_interval=0, load_path=None, hvd):
+          vf_coef=0.5, lp_coef=0.5, max_grad_norm=0.5, gamma=0.99, lam=0.95,
+          log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
+          save_interval=0, load_path=None, hvd):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     mpi_size = comm.Get_size()
 
     sess = tf.get_default_session()
 
-    if isinstance(lr, float): lr = constfn(lr)
-    else: assert callable(lr)
-    if isinstance(cliprange, float): cliprange = constfn(cliprange)
-    else: assert callable(cliprange)
+    if isinstance(lr, float):
+        lr = constfn(lr)
+    else:
+        assert callable(lr)
+    if isinstance(cliprange, float):
+        cliprange = constfn(cliprange)
+    else:
+        assert callable(cliprange)
     total_timesteps = int(total_timesteps)
 
     nenvs = env.num_envs
     ob_space = env.observation_space
     ac_space = env.action_space
     nbatch = nenvs * nsteps
-    
+
     nbatch_train = nbatch // nminibatches
 
     model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nbatch_act=nenvs, nbatch_train=nbatch_train,
-                    nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, lp_coef=lp_coef,
-                    max_grad_norm=max_grad_norm, hvd=hvd)
+                  nsteps=nsteps, ent_coef=ent_coef, vf_coef=vf_coef, lp_coef=lp_coef,
+                  max_grad_norm=max_grad_norm, hvd=hvd)
 
     utils.load_all_params(sess)
 
@@ -290,7 +308,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
     tfirststart = time.time()
     active_ep_buf = epinfobuf100
 
-    nupdates = total_timesteps//nbatch
+    nupdates = total_timesteps // nbatch
     mean_rewards = []
     datapoints = []
 
@@ -310,7 +328,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
 
     tb_writer = TB_Writer(sess)
 
-    for update in range(1, nupdates+1):
+    for update in range(1, nupdates + 1):
         assert nbatch % nminibatches == 0
         nbatch_train = nbatch // nminibatches
         tstart = time.time()
@@ -334,7 +352,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         mpi_print('updating parameters...')
         train_tstart = time.time()
 
-        if states is None: # nonrecurrent version
+        if states is None:  # nonrecurrent version
             inds = np.arange(nbatch)
             for _ in range(noptepochs):
                 np.random.shuffle(inds)
@@ -343,7 +361,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
                     mbinds = inds[start:end]
                     slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices))
-        else: # recurrent version
+        else:  # recurrent version
             assert nenvs % nminibatches == 0
             envinds = np.arange(nenvs)
             flatinds = np.arange(nenvs * nsteps).reshape(nenvs, nsteps)
@@ -370,10 +388,10 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         fps = int(nbatch / (tnow - tstart))
 
         if update % log_interval == 0 or update == 1:
-            step = update*nbatch
+            step = update * nbatch
             rew_mean_10 = utils.process_ep_buf(active_ep_buf, tb_writer=tb_writer, suffix='', step=step)
             ep_len_mean = np.nanmean([epinfo['l'] for epinfo in active_ep_buf])
-            
+
             mpi_print('\n----', update)
 
             mean_rewards.append(rew_mean_10)
@@ -383,12 +401,12 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
             tb_writer.log_scalar(fps, 'fps')
 
             mpi_print('time_elapsed', tnow - tfirststart, run_t_total, train_t_total)
-            mpi_print('timesteps', update*nsteps, total_timesteps)
+            mpi_print('timesteps', update * nsteps, total_timesteps)
 
             mpi_print('eplenmean', ep_len_mean)
             mpi_print('eprew', rew_mean_10)
             mpi_print('fps', fps)
-            mpi_print('total_timesteps', update*nbatch)
+            mpi_print('total_timesteps', update * nbatch)
             mpi_print([epinfo['r'] for epinfo in epinfobuf10])
 
             if len(mblossvals):

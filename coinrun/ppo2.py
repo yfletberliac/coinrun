@@ -7,6 +7,7 @@ import joblib
 import numpy as np
 import tensorflow as tf
 from collections import deque
+import random
 
 from mpi4py import MPI
 
@@ -202,7 +203,7 @@ class Runner(AbstractEnvRunner):
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
 
-            if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot)) or (n_try > 5):
+            if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot)) or (random.uniform(0, 1)) < 0.9:
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)

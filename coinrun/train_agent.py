@@ -52,7 +52,9 @@ def main():
                     lr=lambda f : f * Config.LEARNING_RATE,
                     cliprange=lambda f : f * 0.2,
                     total_timesteps=total_timesteps,
-                    hvd=hvd)
+                    hvd=hvd,
+                    lp_coef=Config.LP_COEF,
+                    lp_active=Config.LP_ACTIVE)
 
 
 if __name__ == '__main__':

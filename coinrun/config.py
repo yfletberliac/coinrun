@@ -54,7 +54,7 @@ class ConfigSingle(object):
 
         # PPO Hyperparameters
         type_keys.append(('ns', 'num_steps', int, 256))
-        type_keys.append(('nmb', 'num_minibatches', int, 8))
+        type_keys.append(('nmb', 'num_minibatches', int, 2))
         type_keys.append(('ppoeps', 'ppo_epochs', int, 3))
         type_keys.append(('ent', 'entropy_coeff', float, .01))
         type_keys.append(('lr', 'learning_rate', float, 5e-4))
@@ -83,6 +83,15 @@ class ConfigSingle(object):
         # The l2 penalty to use during training
         type_keys.append(('l2', 'l2_weight', float, 0.0001))
 
+        # The LP module l2 penalty to use during training
+        type_keys.append(('lp_l2', 'lp_l2_weight', float, 0.0005))
+
+        # The learning potential penalty to use during training
+        type_keys.append(('lp', 'lp_coef', float, 0.5))
+
+        # The probability the agent's action follows an (averaged over previous time steps) increased learning potential
+        type_keys.append(('lp_active', 'lp_active', float, 0.1))
+
         # The probability the agent's action is replaced with a random action
         type_keys.append(('eps', 'epsilon_greedy', float, 0.0))
 
@@ -95,7 +104,7 @@ class ConfigSingle(object):
         type_keys.append(('ubw', 'use_black_white', int, 0, True))
 
         # Overwrite the latest save file after this many updates
-        type_keys.append(('si', 'save_interval', int, 10))
+        type_keys.append(('si', 'save_interval', int, 100))
 
         # The number of evaluation environments to use
         type_keys.append(('num-eval', 'num_eval', int, 20, True))

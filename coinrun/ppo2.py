@@ -97,6 +97,9 @@ class Model(object):
 
         params = tf.trainable_variables()
         weight_params = [v for v in params if '/b' not in v.name]
+        lp_weight_params = [v for v in params if 'lp/w' in v.name]
+        lp_params = [v for v in params if 'lp' in v.name]
+        not_lp_params = [v for v in params if not 'lp' in v.name]
 
         total_num_params = 0
 
@@ -109,22 +112,27 @@ class Model(object):
         mpi_print('total num params:', total_num_params)
 
         l2_loss = tf.reduce_sum([tf.nn.l2_loss(v) for v in weight_params])
+        lp_l2_loss = tf.reduce_sum([tf.nn.l2_loss(v) for v in lp_weight_params])
 
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
 
         lp_loss = tf.square(tf.reduce_mean(learnpotpred) - loss)
 
-        loss = loss + lp_loss * lp_coef
+        loss = loss + lp_loss * lp_coef + lp_l2_loss * Config.LP_L2_WEIGHT
 
         if Config.SYNC_FROM_ROOT:
             trainer = MpiAdamOptimizer(MPI.COMM_WORLD, learning_rate=LR, epsilon=1e-5)
+            lp_trainer = tf.train.AdamOptimizer(learning_rate=LR/10, epsilon=1e-5)
         else:
             trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
+            lp_trainer = tf.train.AdamOptimizer(learning_rate=LR/10, epsilon=1e-5)
 
         # Add Horovod Distributed Optimizer
         trainer = hvd.DistributedOptimizer(trainer)
+        lp_trainer = hvd.DistributedOptimizer(lp_trainer)
 
-        grads_and_var = trainer.compute_gradients(loss, params)
+        grads_and_var = trainer.compute_gradients(loss, not_lp_params)
+        lp_grads_and_var = lp_trainer.compute_gradients(loss, lp_params)
 
         grads, var = zip(*grads_and_var)
         if max_grad_norm is not None:
@@ -132,6 +140,13 @@ class Model(object):
         grads_and_var = list(zip(grads, var))
 
         _train = trainer.apply_gradients(grads_and_var)
+
+        grads, var = zip(*lp_grads_and_var)
+        if max_grad_norm is not None:
+            grads, _grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
+        lp_grads_and_var = list(zip(grads, var))
+
+        _lp_train = lp_trainer.apply_gradients(lp_grads_and_var)
 
         def train(lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
             advs = returns - values
@@ -147,9 +162,9 @@ class Model(object):
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
             return sess.run(
-                [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train],
+                [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train, _lp_train],
                 td_map
-            )[:-1]
+            )[:-2]
 
         self.loss_names = ['policy_loss', 'value_loss', 'learning_potential_loss', 'policy_entropy',
                            'approxkl', 'clipfrac', 'l2_loss']
@@ -185,17 +200,17 @@ class Model(object):
 
 
 class Runner(AbstractEnvRunner):
-    def __init__(self, *, env, model, nsteps, gamma, lam):
+    def __init__(self, *, env, model, nsteps, gamma, lam, lp_active):
         super().__init__(env=env, model=model, nsteps=nsteps)
         self.lam = lam
         self.gamma = gamma
+        self.lp_active = lp_active
 
     def run(self):
         # Here, we init the lists that will contain the mb of experiences
         mb_obs, mb_rewards, mb_actions, mb_values, mb_learnpot, mb_dones, mb_neglogpacs = [], [], [], [], [], [], []
         mb_states = self.states
         epinfos = []
-        n_try = 0
 
         # For n in range number of steps
         while len(mb_obs) < self.nsteps + 1:
@@ -203,7 +218,8 @@ class Runner(AbstractEnvRunner):
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
 
-            if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot)) or (random.uniform(0, 1)) < 0.9:
+            if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot))\
+                    or (random.uniform(0, 1)) < (1-self.lp_active):
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)
@@ -218,11 +234,8 @@ class Runner(AbstractEnvRunner):
                     maybeepinfo = info.get('episode')
                     if maybeepinfo: epinfos.append(maybeepinfo)
                 mb_rewards.append(rewards)
-                n_try = 0
             else:
-                n_try += 1
-                if n_try % 5 == 0:
-                    mpi_print("try another action at step", len(mb_obs), "with n_try = ", n_try)
+                mpi_print("make action without collecting at step", len(mb_obs))
                 self.obs[:], _, self.dones, _ = self.env.step(actions)
 
         # batch of steps to batch of rollouts
@@ -270,9 +283,9 @@ def constfn(val):
 
 
 def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
-          vf_coef=0.5, lp_coef=0.5, max_grad_norm=0.5, gamma=0.99, lam=0.95,
+          vf_coef=0.5, lp_coef, max_grad_norm=0.5, gamma=0.99, lam=0.95,
           log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
-          save_interval=0, load_path=None, hvd):
+          save_interval=0, load_path=None, hvd, lp_active):
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     mpi_size = comm.Get_size()
@@ -302,7 +315,7 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
 
     utils.load_all_params(sess)
 
-    runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam)
+    runner = Runner(env=env, model=model, nsteps=nsteps, gamma=gamma, lam=lam, lp_active=lp_active)
 
     epinfobuf10 = deque(maxlen=10)
     epinfobuf100 = deque(maxlen=100)

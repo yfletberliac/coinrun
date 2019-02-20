@@ -13,6 +13,7 @@ from coinrun import policies, wrappers
 
 mpi_print = utils.mpi_print
 
+
 def create_act_model(sess, env, nenvs):
     ob_space = env.observation_space
     ac_space = env.action_space
@@ -21,6 +22,7 @@ def create_act_model(sess, env, nenvs):
     act = policy(sess, ob_space, ac_space, nenvs, 1, reuse=False)
 
     return act
+
 
 def enjoy_env_sess(sess):
     should_render = True
@@ -129,11 +131,13 @@ def enjoy_env_sess(sess):
 
     return result
 
+
 def main():
     utils.setup_mpi_gpus()
     setup_utils.setup_and_load()
     with tf.Session() as sess:
         enjoy_env_sess(sess)
+
 
 if __name__ == '__main__':
     main()

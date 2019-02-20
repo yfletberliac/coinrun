@@ -105,9 +105,9 @@ def choose_cnn(images):
 
     return out, dropout_assign_ops
 
-class LstmPolicy(object):
 
-    def __init__(self, sess, ob_space, ac_space, nbatch, nsteps, nlstm=256):
+class LstmPolicy(object):
+    def __init__(self, sess, ob_space, ac_space, nbatch, nsteps, nlstm=256, **conv_kwargs):
         nenv = nbatch // nsteps
         self.pdtype = make_pdtype(ac_space)
         X, processed_x = observation_input(ob_space, nbatch)

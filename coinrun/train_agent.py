@@ -26,7 +26,7 @@ def main():
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True # pylint: disable=E1101
-    config.gpu_options.visible_device_list = str(hvd.local_rank())
+    config.gpu_options.visible_device_list = '0'
 
     nenvs = Config.NUM_ENVS
     total_timesteps = int(256e6)
@@ -54,7 +54,7 @@ def main():
                     total_timesteps=total_timesteps,
                     hvd=hvd,
                     lp_coef=Config.LP_COEF,
-                    lp_active=Config.LP_ACTIVE)
+                    lp_active=lambda f : f * Config.LP_ACTIVE)
 
 
 if __name__ == '__main__':

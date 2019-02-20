@@ -54,7 +54,7 @@ class ConfigSingle(object):
 
         # PPO Hyperparameters
         type_keys.append(('ns', 'num_steps', int, 256))
-        type_keys.append(('nmb', 'num_minibatches', int, 2))
+        type_keys.append(('nmb', 'num_minibatches', int, 8))
         type_keys.append(('ppoeps', 'ppo_epochs', int, 3))
         type_keys.append(('ent', 'entropy_coeff', float, .01))
         type_keys.append(('lr', 'learning_rate', float, 5e-4))
@@ -70,7 +70,7 @@ class ConfigSingle(object):
         # This code only supports training-mode batch normalization (normalizing with statistics of the current batch).
         # In practice, we found this is nearly as effective as tracking the moving average of the statistics.
         # NOTE: Only applies to IMPALA and IMPALA-Large architectures
-        type_keys.append(('norm', 'use_batch_norm', int, 0, True))
+        type_keys.append(('norm', 'use_batch_norm', int, 1, True))
 
         # What dropout probability to use after each convolutional layer
         # NOTE: Only applies to IMPALA and IMPALA-Large architectures
@@ -83,13 +83,13 @@ class ConfigSingle(object):
         # The l2 penalty to use during training
         type_keys.append(('l2', 'l2_weight', float, 0.0001))
 
-        # The LP module l2 penalty to use during training
-        type_keys.append(('lp_l2', 'lp_l2_weight', float, 0.0005))
+        # The learning potential LP module l2 penalty to use during training
+        type_keys.append(('lp_l2', 'lp_l2_weight', float, 0.1))
 
-        # The learning potential penalty to use during training
-        type_keys.append(('lp', 'lp_coef', float, 0.5))
+        # The LP penalty to use during training
+        type_keys.append(('lp', 'lp_coef', float, 0.05))
 
-        # The probability the agent's action follows an (averaged over previous time steps) increased learning potential
+        # The probability a transition will be saved subject to its learning potential
         type_keys.append(('lp_active', 'lp_active', float, 0.1))
 
         # The probability the agent's action is replaced with a random action
@@ -110,7 +110,7 @@ class ConfigSingle(object):
         type_keys.append(('num-eval', 'num_eval', int, 20, True))
 
         # The number of episodes to evaluate with each evaluation environment
-        type_keys.append(('rep', 'rep', int, 1))
+        type_keys.append(('rep', 'rep', int, 20))
 
         # Should half the workers act solely has test workers for evaluation
         # These workers will run on test levels and not contributing to training

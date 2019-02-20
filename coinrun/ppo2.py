@@ -65,7 +65,7 @@ class Model(object):
                  nsteps, ent_coef, vf_coef, lp_coef, max_grad_norm, hvd):
         sess = tf.get_default_session()
 
-        hvd.init()
+        # hvd.init()
 
         train_model = policy(sess, ob_space, ac_space, nbatch_train, nsteps)
         norm_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -98,8 +98,6 @@ class Model(object):
         params = tf.trainable_variables()
         weight_params = [v for v in params if '/b' not in v.name]
         lp_weight_params = [v for v in params if 'lp/w' in v.name]
-        lp_params = [v for v in params if 'lp' in v.name]
-        not_lp_params = [v for v in params if not 'lp' in v.name]
 
         total_num_params = 0
 
@@ -115,24 +113,18 @@ class Model(object):
         lp_l2_loss = tf.reduce_sum([tf.nn.l2_loss(v) for v in lp_weight_params])
 
         loss = pg_loss - entropy * ent_coef + vf_loss * vf_coef + l2_loss * Config.L2_WEIGHT
-
-        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - loss)
-
+        lp_loss = tf.square(tf.reduce_mean(learnpotpred) - (pg_loss - entropy * ent_coef + vf_loss * vf_coef))
         loss = loss + lp_loss * lp_coef + lp_l2_loss * Config.LP_L2_WEIGHT
 
         if Config.SYNC_FROM_ROOT:
             trainer = MpiAdamOptimizer(MPI.COMM_WORLD, learning_rate=LR, epsilon=1e-5)
-            lp_trainer = tf.train.AdamOptimizer(learning_rate=LR/10, epsilon=1e-5)
         else:
             trainer = tf.train.AdamOptimizer(learning_rate=LR, epsilon=1e-5)
-            lp_trainer = tf.train.AdamOptimizer(learning_rate=LR/10, epsilon=1e-5)
 
         # Add Horovod Distributed Optimizer
         trainer = hvd.DistributedOptimizer(trainer)
-        lp_trainer = hvd.DistributedOptimizer(lp_trainer)
 
-        grads_and_var = trainer.compute_gradients(loss, not_lp_params)
-        lp_grads_and_var = lp_trainer.compute_gradients(loss, lp_params)
+        grads_and_var = trainer.compute_gradients(loss, params)
 
         grads, var = zip(*grads_and_var)
         if max_grad_norm is not None:
@@ -140,13 +132,6 @@ class Model(object):
         grads_and_var = list(zip(grads, var))
 
         _train = trainer.apply_gradients(grads_and_var)
-
-        grads, var = zip(*lp_grads_and_var)
-        if max_grad_norm is not None:
-            grads, _grad_norm = tf.clip_by_global_norm(grads, max_grad_norm)
-        lp_grads_and_var = list(zip(grads, var))
-
-        _lp_train = lp_trainer.apply_gradients(lp_grads_and_var)
 
         def train(lr, cliprange, obs, returns, masks, actions, values, neglogpacs, states=None):
             advs = returns - values
@@ -162,9 +147,9 @@ class Model(object):
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
             return sess.run(
-                [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train, _lp_train],
+                [pg_loss, vf_loss, lp_loss, entropy, approxkl, clipfrac, l2_loss, _train],
                 td_map
-            )[:-2]
+            )[:-1]
 
         self.loss_names = ['policy_loss', 'value_loss', 'learning_potential_loss', 'policy_entropy',
                            'approxkl', 'clipfrac', 'l2_loss']
@@ -206,7 +191,7 @@ class Runner(AbstractEnvRunner):
         self.gamma = gamma
         self.lp_active = lp_active
 
-    def run(self):
+    def run(self, lpactivenow):
         # Here, we init the lists that will contain the mb of experiences
         mb_obs, mb_rewards, mb_actions, mb_values, mb_learnpot, mb_dones, mb_neglogpacs = [], [], [], [], [], [], []
         mb_states = self.states
@@ -219,7 +204,7 @@ class Runner(AbstractEnvRunner):
             actions, values, learnpot, self.states, neglogpacs = self.model.step(self.obs, self.states, self.dones)
 
             if (mb_learnpot == []) or (np.mean(learnpot) <= np.mean(mb_learnpot))\
-                    or (random.uniform(0, 1)) < (1-self.lp_active):
+                    or (random.uniform(0, 1)) < (1-lpactivenow):
                 mb_obs.append(self.obs.copy())
                 mb_actions.append(actions)
                 mb_values.append(values)
@@ -296,6 +281,10 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         lr = constfn(lr)
     else:
         assert callable(lr)
+    if isinstance(lp_active, float):
+        lp_active = constfn(lp_active)
+    else:
+        assert callable(lr)
     if isinstance(cliprange, float):
         cliprange = constfn(cliprange)
     else:
@@ -348,12 +337,13 @@ def learn(*, policy, env, nsteps, total_timesteps, ent_coef, lr,
         tstart = time.time()
         frac = 1.0 - (update - 1.0) / nupdates
         lrnow = lr(frac)
+        lpactivenow = lp_active(frac)
         cliprangenow = cliprange(frac)
 
         mpi_print('collecting rollouts...')
         run_tstart = time.time()
 
-        obs, returns, masks, actions, values, learnpot, neglogpacs, states, epinfos = runner.run()
+        obs, returns, masks, actions, values, learnpot, neglogpacs, states, epinfos = runner.run(lpactivenow)
         epinfobuf10.extend(epinfos)
         epinfobuf100.extend(epinfos)
 
